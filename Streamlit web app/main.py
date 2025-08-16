@@ -5,14 +5,15 @@ import streamlit as st
 from streamlit_image_coordinates import streamlit_image_coordinates
 import cv2
 from ultralytics import YOLO
-from detection import create_colors_info, detect
+from detection import create_colors_info
+from detection_with_tracking import detect_with_tracking
 
 
 
 def main():
 
     st.set_page_config(page_title="AI Powered Web Application for Football Tactical Analysis", layout="wide", initial_sidebar_state="expanded")
-    st.title("Football Players Detection With Team Prediction & Tactical Map")
+    st.title("🏈 Enhanced Football Analytics: Player Tracking & Tactical Analysis")
     st.subheader(":red[Works only with Tactical Camera footage]")
 
     st.sidebar.title("Main Settings")
@@ -81,10 +82,12 @@ def main():
         st.header(':blue[Welcome!]')
         st.subheader('Main Application Functionalities:', divider='blue')
         st.markdown("""
-                    1. Football players, referee, and ball detection.
-                    2. Players team prediction.
-                    3. Estimation of players and ball positions on a tactical map.
-                    4. Ball Tracking.
+                    1. **Advanced Player Tracking**: ByteTrack-powered persistent player identification across frames
+                    2. **Team Classification**: Intelligent team prediction based on jersey colors
+                    3. **Tactical Map Positioning**: Precise player mapping to exact field coordinates
+                    4. **Player Movement Trails**: Visual tracking of individual player movements over time
+                    5. **Ball Tracking**: Real-time ball position and trajectory analysis
+                    6. **Player ID Consistency**: Maintains unique player IDs throughout the match
                     """)
         st.subheader('How to use?', divider='blue')
         st.markdown("""
@@ -245,7 +248,7 @@ def main():
 
     if start_detection and not stop_detection:
         st.toast(f'Detection Started!')
-        status = detect(cap, stframe, output_file_name, save_output, model_players, model_keypoints,
+        status = detect_with_tracking(cap, stframe, output_file_name, save_output, model_players, model_keypoints,
                          detection_hyper_params, ball_track_hyperparams, plot_hyperparams,
                            num_pal_colors, colors_dic, color_list_lab)
     else:
