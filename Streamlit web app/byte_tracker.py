@@ -2,7 +2,6 @@ import numpy as np
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
 import lap
-from cython_bbox import bbox_overlaps as bbox_ious
 
 @dataclass
 class TrackState:
@@ -20,6 +19,7 @@ class STrack:
         self.is_activated = False
         self.score = score
         self.tracklet_len = 0
+        self.mean = None
         
         self.state = TrackState.New
         self.frame_id = 0
@@ -33,26 +33,26 @@ class STrack:
     @property
     def tlwh(self):
         if self.mean is None:
-            return self._tlwh.copy()
-        ret = self.mean[:4].copy()
+            return self._tlwh.copy().astype(np.float32)
+        ret = self.mean[:4].copy().astype(np.float32)
         ret[2:] = ret[2:] * ret[:2]  # convert xywh to tlwh
-        return ret
+        return ret.astype(np.float32)
     
     @property
     def tlbr(self):
         """Convert bounding box to format `(min x, min y, max x, max y)`, i.e.,
         `(top left, bottom right)`.
         """
-        ret = self.tlwh.copy()
+        ret = self.tlwh.copy().astype(np.float32)
         ret[2:] = ret[:2] + ret[2:]
-        return ret
+        return ret.astype(np.float32)
     
     @property
     def xywh(self):
         """Convert bounding box to format `(center x, center y, width, height)`."""
-        ret = self.tlwh.copy()
+        ret = self.tlwh.copy().astype(np.float32)
         ret[:2] += ret[2:] / 2
-        return ret
+        return ret.astype(np.float32)
     
     def update(self, new_track, frame_id):
         """
@@ -64,7 +64,7 @@ class STrack:
         self.frame_id = frame_id
         self.tracklet_len += 1
         
-        new_tlwh = new_track.tlwh
+        new_tlwh = new_track.tlwh.astype(np.float32)
         self._tlwh = new_tlwh
         self.score = new_track.score
         self.state = TrackState.Tracked
@@ -82,7 +82,7 @@ class STrack:
         self.is_activated = True
     
     def re_activate(self, new_track, frame_id, new_id=False):
-        self._tlwh = new_track.tlwh
+        self._tlwh = new_track.tlwh.astype(np.float32)
         self.score = new_track.score
         self.tracklet_len = 0
         self.state = TrackState.Tracked
@@ -253,14 +253,51 @@ def sub_stracks(tlista, tlistb):
             del stracks[tid]
     return list(stracks.values())
 
+def bbox_ious_numpy(boxes1, boxes2):
+    """
+    Calculate IoU between two sets of boxes using pure NumPy
+    boxes1: (N, 4) array of [x1, y1, x2, y2]
+    boxes2: (M, 4) array of [x1, y1, x2, y2]
+    Returns: (N, M) array of IoU values
+    """
+    if len(boxes1) == 0 or len(boxes2) == 0:
+        return np.zeros((len(boxes1), len(boxes2)), dtype=np.float32)
+    
+    boxes1 = np.array(boxes1, dtype=np.float32)
+    boxes2 = np.array(boxes2, dtype=np.float32)
+    
+    # Calculate areas
+    area1 = (boxes1[:, 2] - boxes1[:, 0]) * (boxes1[:, 3] - boxes1[:, 1])
+    area2 = (boxes2[:, 2] - boxes2[:, 0]) * (boxes2[:, 3] - boxes2[:, 1])
+    
+    # Expand dimensions for broadcasting
+    boxes1 = np.expand_dims(boxes1, 1)  # (N, 1, 4)
+    boxes2 = np.expand_dims(boxes2, 0)  # (1, M, 4)
+    area1 = np.expand_dims(area1, 1)    # (N, 1)
+    area2 = np.expand_dims(area2, 0)    # (1, M)
+    
+    # Calculate intersection
+    inter_x1 = np.maximum(boxes1[:, :, 0], boxes2[:, :, 0])
+    inter_y1 = np.maximum(boxes1[:, :, 1], boxes2[:, :, 1])
+    inter_x2 = np.minimum(boxes1[:, :, 2], boxes2[:, :, 2])
+    inter_y2 = np.minimum(boxes1[:, :, 3], boxes2[:, :, 3])
+    
+    inter_area = np.maximum(0, inter_x2 - inter_x1) * np.maximum(0, inter_y2 - inter_y1)
+    
+    # Calculate IoU
+    union_area = area1 + area2 - inter_area
+    iou = inter_area / (union_area + 1e-6)
+    
+    return iou.astype(np.float32)
+
 def matching_cost(tracks, detections):
     if (len(tracks) == 0) or (len(detections) == 0):
         return np.empty((len(tracks), len(detections)), dtype=np.float32)
     
-    track_boxes = np.array([t.tlbr for t in tracks])
-    det_boxes = np.array([d.tlbr for d in detections])
+    track_boxes = np.array([t.tlbr for t in tracks], dtype=np.float32)
+    det_boxes = np.array([d.tlbr for d in detections], dtype=np.float32)
     
-    ious = bbox_ious(track_boxes, det_boxes)
+    ious = bbox_ious_numpy(track_boxes, det_boxes)
     cost_matrix = 1 - ious
     
     return cost_matrix

@@ -448,3 +448,4 @@ def detect_with_tracking(cap, stframe, output_file_name, save_output, model_play
     # Remove progress bar and return        
     st_prog_bar.empty()
     return True
+
