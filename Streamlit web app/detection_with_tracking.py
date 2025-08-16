@@ -13,7 +13,7 @@ import os
 import json
 import yaml
 import time
-from byte_tracker import ByteTracker
+from byte_tracker import ByteTracker, BallTouchDetector
 
 def get_labels_dics():
     # Get tactical map keypoints positions dictionary
@@ -99,7 +99,8 @@ def predict_player_team(palette, color_list_lab, colors_dic):
     return max(vote_list, key=vote_list.count)
 
 def detect_with_tracking(cap, stframe, output_file_name, save_output, model_players, model_keypoints,
-            hyper_params, ball_track_hyperparams, plot_hyperparams, num_pal_colors, colors_dic, color_list_lab):
+            hyper_params, ball_track_hyperparams, plot_hyperparams, num_pal_colors, colors_dic, color_list_lab, 
+            monitored_players=None):
 
     show_k = plot_hyperparams[0]
     show_pal = plot_hyperparams[1]
@@ -117,8 +118,16 @@ def detect_with_tracking(cap, stframe, output_file_name, save_output, model_play
     if (output_file_name is not None) and (len(output_file_name)==0):
         output_file_name = generate_file_name()
 
-    # Initialize ByteTracker for player tracking
-    player_tracker = ByteTracker(frame_rate=30, track_thresh=0.5, track_buffer=30, match_thresh=0.8)
+    # Initialize ByteTracker with robust 22-player system
+    player_tracker = ByteTracker(frame_rate=30, track_thresh=0.5, track_buffer=30, match_thresh=0.8, max_players=22)
+    
+    # Initialize Ball Touch Detector
+    ball_touch_detector = BallTouchDetector(touch_threshold_cm=30)
+    
+    # Add monitored players if specified
+    if monitored_players:
+        for player_id in monitored_players:
+            ball_touch_detector.add_monitored_player(player_id)
     
     # Player tracking history: {track_id: {'positions': [], 'team': team_name, 'color': color}}
     player_tracks = {}
@@ -322,6 +331,37 @@ def detect_with_tracking(cap, stframe, output_file_name, save_output, model_play
                     ball_track_history['src'].pop(0)
                     ball_track_history['dst'].pop(0)
 
+                # Enhanced ball touch detection
+                if 'homog' in locals():
+                    # Collect current player positions for ball touch detection
+                    current_player_positions = {}
+                    for track in tracked_objects:
+                        track_id = track.track_id
+                        if track_id in player_tracks and player_tracks[track_id]['positions']:
+                            recent_pos = player_tracks[track_id]['positions'][-1]
+                            # Ensure position is properly formatted for touch detection
+                            dst_pos = recent_pos['dst_pos']
+                            if len(dst_pos) >= 2 and dst_pos[0] is not None and dst_pos[1] is not None:
+                                current_player_positions[track_id] = (float(dst_pos[0]), float(dst_pos[1]))
+                            
+                            # Update position history in tracker for enhanced recovery
+                            player_tracker.update_id_position_history(track_id, (float(dst_pos[0]), float(dst_pos[1])))
+                    
+                    # Update ball touches with enhanced error handling
+                    ball_pos_for_touch = None
+                    if detected_ball_src_pos is not None and 'detected_ball_dst_pos' in locals():
+                        try:
+                            ball_x = float(detected_ball_dst_pos[0])
+                            ball_y = float(detected_ball_dst_pos[1])
+                            # Validate ball position is within reasonable tactical map bounds
+                            if 0 <= ball_x <= 890 and 0 <= ball_y <= 570:
+                                ball_pos_for_touch = (ball_x, ball_y)
+                        except (ValueError, TypeError, IndexError):
+                            pass  # Skip this frame if ball position is invalid
+                    
+                    if ball_pos_for_touch is not None and current_player_positions:
+                        ball_touch_detector.update_ball_touches(current_player_positions, ball_pos_for_touch, frame_nbr)
+
             #################### Part 3 #####################
             # Updated Frame & Tactical Map With Annotations #
             #################################################
@@ -343,16 +383,31 @@ def detect_with_tracking(cap, stframe, output_file_name, save_output, model_play
                     
                     if show_p:
                         # Draw bounding box
+                        bbox_color = color_bgr
+                        bbox_thickness = 2
+                        
+                        # Highlight monitored players with thicker border
+                        if track_id in ball_touch_detector.monitored_players:
+                            bbox_thickness = 3
+                            # Add special color if player is in contact with ball
+                            touch_info = ball_touch_detector.get_touch_info()
+                            if track_id in touch_info and touch_info[track_id]['in_contact']:
+                                bbox_color = (0, 255, 0)  # Green for ball contact
+                        
                         annotated_frame = cv2.rectangle(annotated_frame, 
                                                       (int(bbox[0]), int(bbox[1])),
                                                       (int(bbox[2]), int(bbox[3])), 
-                                                      color_bgr, 2)
+                                                      bbox_color, bbox_thickness)
                         
-                        # Draw track ID and team name
+                        # Draw track ID, team name, and touch count
                         label_text = f"ID:{track_id} {team_name} {score:.2f}"
+                        if track_id in ball_touch_detector.monitored_players:
+                            touches = ball_touch_detector.get_touch_count(track_id)
+                            label_text += f" T:{touches}"
+                        
                         annotated_frame = cv2.putText(annotated_frame, label_text,
                                     (int(bbox[0]), int(bbox[1])-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                                    color_bgr, 2)
+                                    bbox_color, 2)
                     
                     # Show color palette
                     if show_pal:
@@ -422,10 +477,35 @@ def detect_with_tracking(cap, stframe, output_file_name, save_output, model_play
             tac_map_copy = cv2.resize(tac_map_copy, (tac_map_copy.shape[1], annotated_frame.shape[0]))
             final_img = cv2.hconcat((annotated_frame, tac_map_copy))
             
-            ## Add info annotations
+            ## Add enhanced info annotations
             cv2.putText(final_img, "Enhanced Player Tracking", (1270,60), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0,0,0), 2)
-            cv2.putText(final_img, f"Active Tracks: {len([t for t in player_tracks.values() if t['last_seen'] == frame_nbr])}", 
+            
+            # Get tracker info for display
+            tracker_info = player_tracker.get_id_preview_info()
+            active_tracks = len([t for t in player_tracks.values() if t['last_seen'] == frame_nbr])
+            cv2.putText(final_img, f"Active: {active_tracks}/22", 
                        (1270,90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,0), 2)
+            
+            # Show recoverable tracks
+            recoverable_count = len(tracker_info['lost_recoverable'])
+            if recoverable_count > 0:
+                cv2.putText(final_img, f"Recoverable: {recoverable_count}", 
+                           (1270,110), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,100,0), 2)
+            
+            # Show ball touch information for monitored players
+            if ball_touch_detector.monitored_players:
+                touch_y_start = 140 if recoverable_count > 0 else 120
+                cv2.putText(final_img, "Ball Touches:", (1270, touch_y_start), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,0), 2)
+                y_offset = touch_y_start + 20
+                touch_info = ball_touch_detector.get_touch_info()
+                for player_id in sorted(ball_touch_detector.monitored_players):
+                    if player_id in touch_info:
+                        touches = touch_info[player_id]['touches']
+                        in_contact = touch_info[player_id]['in_contact']
+                        status = "●" if in_contact else "○"
+                        cv2.putText(final_img, f"ID{player_id}: {touches} {status}", 
+                                   (1270, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 1)
+                        y_offset += 20
 
             new_frame_time = time.time()
             fps = 1/(new_frame_time-prev_frame_time)

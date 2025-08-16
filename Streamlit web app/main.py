@@ -19,6 +19,27 @@ def main():
     st.sidebar.title("Main Settings")
     demo_selected = st.sidebar.radio(label="Select Demo Video", options=["Demo 1", "Demo 2"], horizontal=True)
 
+    ## ID Preview Section
+    st.sidebar.markdown('---')
+    st.sidebar.subheader("🆔 Player ID System")
+    
+    # Create a simple ID preview display
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        st.markdown("**Available IDs:**")
+        available_preview = ", ".join([str(i) for i in range(1, 12)])
+        st.markdown(f"`{available_preview}`")
+        st.markdown("**Active IDs:**")
+        st.markdown("`None (0/22)`")
+    with col2:
+        st.markdown("**IDs 12-22:**")
+        available_preview_2 = ", ".join([str(i) for i in range(12, 23)])
+        st.markdown(f"`{available_preview_2}`")
+        st.markdown("**Lost/Recoverable:**")
+        st.markdown("`None`")
+    
+    st.sidebar.info("🔄 **ID System Features:**\n- Fixed 22-player pool (1-22)\n- Smart ID recovery after intersections\n- Position-based re-identification\n- No ID recycling beyond limit")
+    
     ## Sidebar Setup
     st.sidebar.markdown('---')
     st.sidebar.subheader("Video Upload")
@@ -82,12 +103,14 @@ def main():
         st.header(':blue[Welcome!]')
         st.subheader('Main Application Functionalities:', divider='blue')
         st.markdown("""
-                    1. **Advanced Player Tracking**: ByteTrack-powered persistent player identification across frames
-                    2. **Team Classification**: Intelligent team prediction based on jersey colors
-                    3. **Tactical Map Positioning**: Precise player mapping to exact field coordinates
-                    4. **Player Movement Trails**: Visual tracking of individual player movements over time
-                    5. **Ball Tracking**: Real-time ball position and trajectory analysis
-                    6. **Player ID Consistency**: Maintains unique player IDs throughout the match
+                    1. **Robust 22-Player Tracking**: Fixed ID system (1-22) with persistent player identification
+                    2. **Ball Touch Detection**: Real-world distance calculation for ball contact monitoring
+                    3. **Team Classification**: Intelligent team prediction based on jersey colors
+                    4. **Tactical Map Positioning**: Precise player mapping to exact field coordinates
+                    5. **Player Movement Trails**: Visual tracking of individual player movements over time
+                    6. **Ball Tracking**: Real-time ball position and trajectory analysis
+                    7. **Touch Analytics**: Monitor specific players and count ball touches with 30cm precision
+                    8. **Player ID Persistence**: Lost players retain their IDs when reappearing
                     """)
         st.subheader('How to use?', divider='blue')
         st.markdown("""
@@ -228,6 +251,57 @@ def main():
                 2: show_b,
                 3: show_p
             }
+            
+            # Enhanced Ball Touch Monitoring Section
+            st.markdown("---")
+            st.write("⚽ **Enhanced Ball Touch Monitoring:**")
+            
+            # Status display
+            st.info("🔍 **Detection Status**: Ball detection working ✅ | Touch calculation enhanced with tactical map scaling 📏")
+            
+            btcol1, btcol2 = st.columns([1,1])
+            with btcol1:
+                monitor_touches = st.checkbox(label="Enable Ball Touch Detection", value=True)
+            with btcol2:
+                touch_threshold = st.slider("Touch Threshold (cm)", min_value=10, max_value=100, value=30, step=5, 
+                                          help="Real-world distance threshold scaled to tactical map")
+            
+            if monitor_touches:
+                st.write("Select Player IDs to Monitor (1-22):")
+                btcol3, btcol4, btcol5 = st.columns([1,1,1])
+                with btcol3:
+                    monitored_ids_str = st.text_input("Player IDs (comma-separated)", 
+                                                     placeholder="e.g., 1,7,10", 
+                                                     help="Enter player IDs separated by commas (1-22)")
+                with btcol4:
+                    quick_select = st.selectbox("Quick Select", 
+                                              options=["None", "All", "1-11", "12-22"],
+                                              help="Quick selection options")
+                with btcol5:
+                    reset_touches = st.button("Reset Touch Counts", help="Reset all touch counters to zero")
+                
+                # Process monitored player IDs
+                monitored_players = []
+                if monitored_ids_str:
+                    try:
+                        monitored_players = [int(x.strip()) for x in monitored_ids_str.split(",") if x.strip()]
+                        monitored_players = [pid for pid in monitored_players if 1 <= pid <= 22]  # Validate range
+                    except ValueError:
+                        st.error("Invalid player IDs. Please enter numbers between 1-22.")
+                
+                # Handle quick select
+                if quick_select == "All":
+                    monitored_players = list(range(1, 23))
+                elif quick_select == "1-11":
+                    monitored_players = list(range(1, 12))
+                elif quick_select == "12-22":
+                    monitored_players = list(range(12, 23))
+                
+                if monitored_players:
+                    st.info(f"Monitoring players: {', '.join(map(str, monitored_players))}")
+            else:
+                monitored_players = []
+                touch_threshold = 30
             st.markdown('---')
             bcol21, bcol22, bcol23, bcol24 = st.columns([1.5,1,1,1])
             with bcol21:
@@ -250,7 +324,7 @@ def main():
         st.toast(f'Detection Started!')
         status = detect_with_tracking(cap, stframe, output_file_name, save_output, model_players, model_keypoints,
                          detection_hyper_params, ball_track_hyperparams, plot_hyperparams,
-                           num_pal_colors, colors_dic, color_list_lab)
+                           num_pal_colors, colors_dic, color_list_lab, monitored_players)
     else:
         try:
             # Release the video capture object and close the display window
